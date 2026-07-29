@@ -13,6 +13,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/collections"
@@ -121,7 +122,8 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 
 	defer c.Close() //nolint:errcheck
 
-	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name)
+	r.Log.Info("deleting machine", "machine", deleteMachine.Name, "node", node.Name,
+		"failureDomain", ptr.Deref(deleteMachine.Spec.FailureDomain, ""))
 
 	// Mark machine as leaving etcd so health check skips it even if reconciliation
 	// crashes between gracefulEtcdLeave and Client.Delete (prevents deadlock where
