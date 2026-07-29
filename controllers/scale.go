@@ -82,7 +82,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
 	}
 
-	deleteMachine, err := selectMachineForScaleDown(controlPlane, machinesRequireUpgrade)
+	deleteMachine, err := selectMachineForScaleDown(ctx, controlPlane, machinesRequireUpgrade)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -191,7 +191,7 @@ func (r *TalosControlPlaneReconciler) deleteNode(ctx context.Context, client cli
 	return ctrl.Result{}, nil
 }
 
-func selectMachineForScaleDown(controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
+func selectMachineForScaleDown(ctx context.Context, controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
 	machines := controlPlane.Machines
 	switch {
 	case controlPlane.MachineWithDeleteAnnotation(outdatedMachines).Len() > 0:
@@ -202,5 +202,7 @@ func selectMachineForScaleDown(controlPlane *ControlPlane, outdatedMachines coll
 		machines = outdatedMachines
 	}
 
-	return machines.Oldest(), nil
+	// pick an eligible machine from the failure domain holding the most machines, so that scaling
+	// down keeps the control plane spread instead of always removing the oldest machine.
+	return controlPlane.MachineInFailureDomainWithMostMachines(ctx, machines)
 }
