@@ -6,36 +6,122 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/pointer"
 	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	"sigs.k8s.io/cluster-api/util/collections"
+
+	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1alpha3"
 )
 
-// machineInFailureDomain returns a control plane machine placed in the given failure domain.
-func machineInFailureDomain(name, failureDomain string, deleting bool) clusterv1.Machine {
-	machine := clusterv1.Machine{
+const (
+	currentVersion  = "v1.36.2"
+	outdatedVersion = "v1.35.0"
+)
+
+// machineOption customizes a machine built by newMachine.
+type machineOption func(*clusterv1.Machine)
+
+// inFailureDomain places the machine in the given failure domain.
+func inFailureDomain(failureDomain string) machineOption {
+	return func(machine *clusterv1.Machine) {
+		machine.Spec.FailureDomain = pointer.String(failureDomain)
+	}
+}
+
+// outdated marks the machine as running a version which no longer matches the control plane,
+// which is what makes MachinesNeedingRollout pick it up.
+func outdated() machineOption {
+	return func(machine *clusterv1.Machine) {
+		machine.Spec.Version = pointer.String(outdatedVersion)
+	}
+}
+
+// deleting marks the machine as being deleted.
+func deleting() machineOption {
+	return func(machine *clusterv1.Machine) {
+		machine.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		machine.ObjectMeta.Finalizers = []string{clusterv1.MachineFinalizer}
+	}
+}
+
+// createdAt sets the creation timestamp, which drives the Oldest() ordering used on scale down.
+func createdAt(offset time.Duration) machineOption {
+	return func(machine *clusterv1.Machine) {
+		machine.ObjectMeta.CreationTimestamp = metav1.Time{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(offset)}
+	}
+}
+
+// newMachine returns an up-to-date control plane machine with no failure domain set.
+func newMachine(name string, opts ...machineOption) *clusterv1.Machine {
+	machine := &clusterv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
+		Spec: clusterv1.MachineSpec{
+			Version: pointer.String(currentVersion),
+		},
 	}
 
-	if failureDomain != "" {
-		machine.Spec.FailureDomain = pointer.String(failureDomain)
-	}
-
-	if deleting {
-		machine.ObjectMeta.DeletionTimestamp = &metav1.Time{Time: time.Now()}
-		machine.ObjectMeta.Finalizers = []string{clusterv1.MachineFinalizer}
+	for _, opt := range opts {
+		opt(machine)
 	}
 
 	return machine
 }
 
-func TestGetFailureDomain(t *testing.T) {
+// newControlPlaneForTest builds a ControlPlane with the given failure domains and machines.
+//
+// infraObjects and talosConfigs are left empty on purpose: both matchers treat a missing entry as
+// a match, so whether a machine needs a rollout is driven solely by its Kubernetes version.
+func newControlPlaneForTest(failureDomains clusterv1.FailureDomains, machines ...*clusterv1.Machine) *ControlPlane {
+	return &ControlPlane{
+		TCP: &controlplanev1.TalosControlPlane{
+			Spec: controlplanev1.TalosControlPlaneSpec{
+				Version: currentVersion,
+			},
+		},
+		Cluster: &clusterv1.Cluster{
+			Status: clusterv1.ClusterStatus{
+				FailureDomains: failureDomains,
+			},
+		},
+		Machines: collections.FromMachines(machines...),
+	}
+}
+
+// controlPlaneDomains marks every given domain as suitable for the control plane.
+func controlPlaneDomains(ids ...string) clusterv1.FailureDomains {
+	failureDomains := clusterv1.FailureDomains{}
+
+	for _, id := range ids {
+		failureDomains[id] = clusterv1.FailureDomainSpec{ControlPlane: true}
+	}
+
+	return failureDomains
+}
+
+// spread counts the machines per failure domain.
+func spread(machines collections.Machines) map[string]int {
+	counts := map[string]int{}
+
+	for _, machine := range machines {
+		if machine.Spec.FailureDomain != nil {
+			counts[*machine.Spec.FailureDomain]++
+		}
+	}
+
+	return counts
+}
+
+func TestControlPlaneFailureDomains(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
@@ -56,130 +142,168 @@ func TestGetFailureDomain(t *testing.T) {
 		{
 			name: "filters out non control plane domains",
 			failureDomains: clusterv1.FailureDomains{
-				"a": clusterv1.FailureDomainSpec{ControlPlane: true},
-				"b": clusterv1.FailureDomainSpec{ControlPlane: false},
-				"c": clusterv1.FailureDomainSpec{ControlPlane: true},
+				"a": {ControlPlane: true},
+				"b": {ControlPlane: false},
+				"c": {ControlPlane: true},
 			},
 			expected: []string{"a", "c"},
 		},
 		{
-			name: "falls back to all domains when none are marked for control plane",
+			name: "falls back to all domains when none are marked for the control plane",
 			failureDomains: clusterv1.FailureDomains{
-				"c": clusterv1.FailureDomainSpec{ControlPlane: false},
-				"a": clusterv1.FailureDomainSpec{ControlPlane: false},
-				"b": clusterv1.FailureDomainSpec{ControlPlane: false},
+				"c": {ControlPlane: false},
+				"a": {ControlPlane: false},
+				"b": {ControlPlane: false},
 			},
 			expected: []string{"a", "b", "c"},
 		},
 		{
-			name: "returns sorted list",
+			name: "keeps the single control plane domain even when others are available",
 			failureDomains: clusterv1.FailureDomains{
-				"c": clusterv1.FailureDomainSpec{ControlPlane: true},
-				"a": clusterv1.FailureDomainSpec{ControlPlane: true},
-				"b": clusterv1.FailureDomainSpec{ControlPlane: true},
+				"a": {ControlPlane: true},
+				"b": {ControlPlane: false},
+				"c": {ControlPlane: false},
 			},
-			expected: []string{"a", "b", "c"},
+			expected: []string{"a"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cluster := &clusterv1.Cluster{
-				Status: clusterv1.ClusterStatus{
-					FailureDomains: tt.failureDomains,
-				},
+			var actual []string
+
+			for id := range newControlPlaneForTest(tt.failureDomains).FailureDomains() {
+				actual = append(actual, id)
 			}
 
-			r := &TalosControlPlaneReconciler{}
+			sort.Strings(actual)
 
-			assert.Equal(t, tt.expected, r.getFailureDomain(context.Background(), cluster))
+			assert.Equal(t, tt.expected, actual)
 		})
 	}
 }
 
-func TestPickFailureDomain(t *testing.T) {
+func TestNextFailureDomainForScaleUp(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
 		name           string
-		failureDomains []string
-		machines       []clusterv1.Machine
-		expected       string
+		failureDomains clusterv1.FailureDomains
+		machines       []*clusterv1.Machine
+		expected       []string
 	}{
 		{
-			name:           "empty failure domains",
+			name:           "no failure domains",
 			failureDomains: nil,
-			machines:       nil,
-			expected:       "",
+			expected:       nil,
 		},
 		{
 			name:           "single failure domain",
-			failureDomains: []string{"a"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "a", false),
-			},
-			expected: "a",
+			failureDomains: controlPlaneDomains("a"),
+			machines:       []*clusterv1.Machine{newMachine("cp-1", inFailureDomain("a"))},
+			expected:       []string{"a"},
 		},
 		{
-			name:           "no machines picks first sorted domain",
-			failureDomains: []string{"a", "b", "c"},
-			machines:       nil,
-			expected:       "a",
+			name:           "no machines picks any domain",
+			failureDomains: controlPlaneDomains("a", "b", "c"),
+			expected:       []string{"a", "b", "c"},
 		},
 		{
-			name:           "picks least used domain",
-			failureDomains: []string{"a", "b", "c"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "a", false),
-				machineInFailureDomain("cp-2", "b", false),
-				machineInFailureDomain("cp-3", "a", false),
-				machineInFailureDomain("cp-4", "c", false),
-				machineInFailureDomain("cp-5", "c", false),
+			name:           "picks the least used domain",
+			failureDomains: controlPlaneDomains("a", "b", "c"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1", inFailureDomain("a")),
+				newMachine("cp-2", inFailureDomain("b")),
+				newMachine("cp-3", inFailureDomain("a")),
+				newMachine("cp-4", inFailureDomain("c")),
+				newMachine("cp-5", inFailureDomain("c")),
 			},
-			expected: "b",
-		},
-		{
-			name:           "deterministic tie break picks first sorted domain",
-			failureDomains: []string{"a", "b", "c"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "a", false),
-				machineInFailureDomain("cp-2", "b", false),
-				machineInFailureDomain("cp-3", "c", false),
-			},
-			expected: "a",
+			expected: []string{"b"},
 		},
 		{
 			name:           "ignores machines being deleted",
-			failureDomains: []string{"a", "b"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "a", false),
-				machineInFailureDomain("cp-2", "b", true),
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1", inFailureDomain("a")),
+				newMachine("cp-2", inFailureDomain("b"), deleting()),
 			},
-			expected: "b",
+			expected: []string{"b"},
 		},
 		{
-			name:           "ignores machines without failure domain",
-			failureDomains: []string{"a", "b"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "", false),
-				machineInFailureDomain("cp-2", "a", false),
+			name:           "ignores machines without a failure domain",
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1"),
+				newMachine("cp-2", inFailureDomain("a")),
 			},
-			expected: "b",
+			expected: []string{"b"},
 		},
 		{
 			name:           "ignores machines in unknown failure domains",
-			failureDomains: []string{"a", "b"},
-			machines: []clusterv1.Machine{
-				machineInFailureDomain("cp-1", "unknown", false),
-				machineInFailureDomain("cp-2", "a", false),
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1", inFailureDomain("unknown")),
+				newMachine("cp-2", inFailureDomain("a")),
 			},
-			expected: "b",
+			expected: []string{"b"},
+		},
+		{
+			// outdated machines are about to be replaced, so spreading the up-to-date ones wins.
+			name:           "prefers spreading up-to-date machines over outdated ones",
+			failureDomains: controlPlaneDomains("a", "b", "c"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1", inFailureDomain("a"), outdated()),
+				newMachine("cp-2", inFailureDomain("b"), outdated()),
+				newMachine("cp-3", inFailureDomain("c")),
+			},
+			expected: []string{"a", "b"},
+		},
+		{
+			// tie on up-to-date machines, so the domain with fewer machines overall wins.
+			name:           "breaks ties on up-to-date machines by the overall machine count",
+			failureDomains: controlPlaneDomains("a", "b"),
+			machines: []*clusterv1.Machine{
+				newMachine("cp-1", inFailureDomain("a"), outdated()),
+				newMachine("cp-2", inFailureDomain("a"), outdated()),
+				newMachine("cp-3", inFailureDomain("b"), outdated()),
+			},
+			expected: []string{"b"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.expected, pickFailureDomain(tt.failureDomains, tt.machines))
+			actual := newControlPlaneForTest(tt.failureDomains, tt.machines...).NextFailureDomainForScaleUp(context.Background())
+
+			if tt.expected == nil {
+				assert.Nil(t, actual)
+
+				return
+			}
+
+			require.NotNil(t, actual)
+			// ties are broken at random, so any of the expected domains is a valid answer.
+			assert.Contains(t, tt.expected, *actual)
 		})
 	}
+}
+
+// TestScaleUpSpreadsAcrossFailureDomains walks the initial scale up of a control plane and asserts
+// that the machines end up evenly spread, one per failure domain.
+func TestScaleUpSpreadsAcrossFailureDomains(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	failureDomains := controlPlaneDomains("a", "b", "c")
+
+	var machines []*clusterv1.Machine
+
+	for i := range 3 {
+		fd := newControlPlaneForTest(failureDomains, machines...).NextFailureDomainForScaleUp(ctx)
+		require.NotNil(t, fd)
+
+		machines = append(machines, newMachine(fmt.Sprintf("cp-%d", i+1), inFailureDomain(*fd), createdAt(time.Duration(i)*time.Minute)))
+	}
+
+	assert.Equal(t, map[string]int{"a": 1, "b": 1, "c": 1}, spread(collections.FromMachines(machines...)))
 }
