@@ -20,3 +20,15 @@ preface = """\
         description = """\
 CACPPT updated for Talos 1.13.
 """
+
+[notes.failuredomains]
+    title = "Failure Domain Spreading"
+        description = """\
+Control plane machines are now spread across the cluster failure domains instead of being
+placed at random, matching the behavior of the KubeadmControlPlane: a new machine goes to the
+failure domain with the fewest up-to-date machines, and scaling down removes a machine from the
+domain holding the most, so the spreading is preserved across rolling updates.
+
+Only the failure domains marked for the control plane are used. If the infrastructure provider
+marks none of them, all of the cluster failure domains are used instead.
+"""
