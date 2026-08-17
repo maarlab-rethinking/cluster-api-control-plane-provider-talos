@@ -1,12 +1,20 @@
 # cluster-api-control-plane-provider-talos
 
 <!-- textlint-disable -->
-> [!CAUTION]
-> Sidero Labs is no longer actively developing Cluster API Control Plane Provider Talos.
+> [!IMPORTANT]
+> This is a maintenance fork of
+> [siderolabs/cluster-api-control-plane-provider-talos](https://github.com/siderolabs/cluster-api-control-plane-provider-talos),
+> which Sidero Labs stopped developing in August 2026 in favour of
+> [Omni](https://github.com/siderolabs/omni.git). It is maintained for the Maarlab
+> Kubernetes platform, where Omni is not a viable replacement, and is offered
+> as-is under the same MPL-2.0 licence.
 >
-> For an alternative, please see [Omni](https://github.com/siderolabs/omni.git).
+> Releases are tagged `vX.Y.Z-maarlab.N` and images are published to
+> `ghcr.io/maarlab-rethinking/cluster-api-control-plane-talos-controller`.
 >
-> Unless you have an existing support contract covering Cluster API Control Plane Provider Talos, all support will be provided by the community (including questions in our Slack workspace).
+> Upstream remains the reference for the provider's design and documentation. The
+> known deadline for this fork is **CAPI v1.16 (April 2027)**, when compatibility
+> with the `v1beta1` contract this provider implements reaches end of life.
 <!-- textlint-enable -->
 
 ## Intro
