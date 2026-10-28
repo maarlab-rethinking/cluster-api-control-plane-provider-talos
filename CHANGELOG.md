@@ -1,3 +1,67 @@
+## [CAPI Control Plane Provider Talos 0.5.15-maarlab.1](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/releases/tag/v0.5.15-maarlab.1) (2026-10-28)
+
+Welcome to the v0.5.15-maarlab.1 release of CAPI Control Plane Provider Talos!
+
+Downstream build of upstream `main`, three commits past v0.5.14, carrying the control
+plane failure domain patches proposed upstream in
+https://github.com/siderolabs/cluster-api-control-plane-provider-talos/pull/279.
+
+Use upstream unless you need those patches. Everything else in this release comes from
+upstream and is not modified here.
+
+Please try out the release binaries and report any issues at
+https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/issues.
+
+### Failure Domain Spreading
+
+Control plane machines now stay spread across failure domains during a rollout, not only when
+the cluster is first created. A new machine goes to the domain holding the fewest up-to-date
+machines, ties are broken by the fewest machines overall, and scaling down removes a machine
+from the domain holding the most, so a rolling update no longer drains a domain.
+
+The failure domain chosen for each machine is logged along with the domains that were eligible.
+
+This is the only change in this build that is not upstream yet.
+
+
+### Upstream Changes Since v0.5.14
+
+This build picks up the etcd health check and remediation work merged upstream after
+v0.5.14. A member that goes unhealthy on its own no longer fails the etcd health check
+forever, the membership check is stricter, and a machine a MachineHealthCheck flagged is
+now removed through the scale down path instead of staying a voting member indefinitely.
+
+The boot sequence check now skips machines on their way out. A machine that will never
+finish booting no longer blocks the scale down that would have removed it.
+
+
+### Contributors
+
+* Enrique Hernández Bello
+* Andrey Smirnov
+
+### Changes
+<details><summary>9 commits</summary>
+<p>
+
+* [`3ba0b67`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/3ba0b67d812266df81ef4726305fe5f8fe08ddcb) fork: publish under maarlab-rethinking
+* [`ab6d715`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/ab6d715f53ef30d8377204c51cae714be5dbb159) ci: run the workflows on GitHub-hosted runners
+* [`535bfff`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/535bfff32f25654a8b675a68ef1c254a781aaa2e) docs: add release note about failure domain spreading
+* [`09afb74`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/09afb747c906b51e2e8991a4f322cdf8a87f6086) feat: log the failure domain picked for control plane machines
+* [`9563d86`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/9563d864cfd91ad4c6347582a427e3a34b8b5514) fix: pick the failure domain with most machines when scaling down
+* [`90d50aa`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/90d50aa0bab02dfb8bb849ee283f73f9fa45dae4) fix: count only up-to-date machines when picking a failure domain
+* [`8144d35`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/8144d3592d668da974534807b09d8367895cc8ef) feat: remediate control plane machines flagged by a MachineHealthCheck
+* [`04b8d99`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/04b8d990a50489a5398a0c4e955547147f9de4f6) fix: tighten the etcd membership check
+* [`ef5bd86`](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/commit/ef5bd86da62fb6ceec3e019a70ed8d7111b9a633) fix: skip remediating machines in etcd health check
+</p>
+</details>
+
+### Dependency Changes
+
+This release has no dependency changes
+
+Previous release can be found at [v0.5.14](https://github.com/maarlab-rethinking/cluster-api-control-plane-provider-talos/releases/tag/v0.5.14)
+
 ## [CAPI Control Plane Provider Talos 0.5.14](https://github.com/talos-systems/cluster-api-control-plane-provider-talos/releases/tag/v0.5.14) (2026-09-21)
 
 Welcome to the v0.5.14 release of CAPI Control Plane Provider Talos!

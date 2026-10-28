@@ -11,16 +11,26 @@ previous = "v0.5.14"
 pre_release = false
 
 preface = """\
-Downstream build of upstream v0.5.14 carrying the control plane failure domain
-patches that are still pending upstream review. Use upstream unless you need them.
+Downstream build of upstream `main`, three commits past v0.5.14, carrying the control
+plane failure domain patches proposed upstream in
+https://github.com/siderolabs/cluster-api-control-plane-provider-talos/pull/279.
+
+Use upstream unless you need those patches. Everything else in this release comes from
+upstream and is not modified here.
 """
 
 [notes]
 
-[notes.talos]
-    title = "Talos Linux"
+[notes.upstream]
+    title = "Upstream Changes Since v0.5.14"
         description = """\
-CACPPT updated for Talos 1.14.
+This build picks up the etcd health check and remediation work merged upstream after
+v0.5.14. A member that goes unhealthy on its own no longer fails the etcd health check
+forever, the membership check is stricter, and a machine a MachineHealthCheck flagged is
+now removed through the scale down path instead of staying a voting member indefinitely.
+
+The boot sequence check now skips machines on their way out. A machine that will never
+finish booting no longer blocks the scale down that would have removed it.
 """
 
 [notes.failuredomains]
@@ -32,4 +42,6 @@ machines, ties are broken by the fewest machines overall, and scaling down remov
 from the domain holding the most, so a rolling update no longer drains a domain.
 
 The failure domain chosen for each machine is logged along with the domains that were eligible.
+
+This is the only change in this build that is not upstream yet.
 """
